@@ -14,6 +14,10 @@ import (
 const DEFAULT_NUMBER_OF_WORKERS int = 1
 const DEFAULT_CMD string = "sh"
 
+const PARAM_ARGS_FLAG_NAME string = "args"
+const PARAM_COUNT_OF_WORKERS_FLAG_NAME string = "countOfWorkers"
+const PARAM_CMD_FLAG_NAME string = "cmd"
+
 type arguments []string
 
 func (a *arguments) String() string {
@@ -31,31 +35,33 @@ var args arguments
 
 func startCmd(killWorkersChan chan bool) error {
 	command := exec.Command(cmdString, args...)
-	success := make(chan bool)
+	successChan := make(chan bool)
 	command.Start()
+
 	go func() {
 		select {
 		case <-killWorkersChan:
 			command.Process.Kill()
-		case <-success:
+		case <-successChan:
 		}
 	}()
+
 	err := command.Wait()
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "There was an error running command: ", err)
 		return err
 	}
-	success <- true
+	successChan <- true
 
 	return nil
 }
 
-func worker(finishCh chan bool, killWorkersChan chan bool) {
+func worker(finishChan chan bool, killWorkersChan chan bool) {
 	if err := startCmd(killWorkersChan); err != nil {
-		finishCh <- false
+		finishChan <- false
 	} else {
-		finishCh <- true
+		finishChan <- true
 	}
 }
 
@@ -65,9 +71,9 @@ func getErrorDuration(errorsCount int) time.Duration {
 }
 
 func parseFlags() {
-	flag.IntVar(&countOfWorkers, "countOfWorkers", DEFAULT_NUMBER_OF_WORKERS, "Count of workers")
-	flag.StringVar(&cmdString, "cmd", DEFAULT_CMD, "Worker command")
-	flag.Var(&args, "args", "Worker command arguments")
+	flag.IntVar(&countOfWorkers, PARAM_COUNT_OF_WORKERS_FLAG_NAME, DEFAULT_NUMBER_OF_WORKERS, "Count of workers")
+	flag.StringVar(&cmdString, PARAM_CMD_FLAG_NAME, DEFAULT_CMD, "Worker command")
+	flag.Var(&args, PARAM_ARGS_FLAG_NAME, "Worker command arguments")
 	flag.Parse()
 
 	if flag.NFlag() == 0 {
@@ -76,21 +82,25 @@ func parseFlags() {
 	}
 }
 
+func catchKillSignal() (killWorkersChan chan bool) {
+	osKillSignalChan := make(chan os.Signal, 1)
+	signal.Notify(osKillSignalChan, os.Interrupt, os.Kill, syscall.SIGTERM)
+
+	go func() {
+		<-osKillSignalChan
+		close(killWorkersChan)
+	}()
+
+	return
+}
+
 func main() {
 	parseFlags()
 
 	workerEndChan := make(chan bool)
 	workersCount := 0
 	errorsCount := 0
-
-	osKillSignalChan := make(chan os.Signal, 1)
-	signal.Notify(osKillSignalChan, os.Interrupt, os.Kill, syscall.SIGTERM)
-
-	killWorkersChan := make(chan bool)
-	go func() {
-		<-osKillSignalChan
-		close(killWorkersChan)
-	}()
+	killWorkersChan := catchKillSignal()
 
 	for {
 		select {
