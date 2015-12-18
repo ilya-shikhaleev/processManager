@@ -82,7 +82,9 @@ func parseFlags() {
 	}
 }
 
-func catchKillSignal() (killWorkersChan chan bool) {
+func catchKillSignal() (chan bool) {
+	killWorkersChan := make(chan bool)
+
 	osKillSignalChan := make(chan os.Signal, 1)
 	signal.Notify(osKillSignalChan, os.Interrupt, os.Kill, syscall.SIGTERM)
 
@@ -91,7 +93,7 @@ func catchKillSignal() (killWorkersChan chan bool) {
 		close(killWorkersChan)
 	}()
 
-	return
+	return killWorkersChan
 }
 
 func main() {
