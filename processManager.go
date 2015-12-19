@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"sync"
 )
 
 const DEFAULT_NUMBER_OF_WORKERS int = 1
@@ -33,9 +34,12 @@ var countOfWorkers int
 var cmdString string
 var args arguments
 
+var killWaitGroup sync.WaitGroup
+
 func startCmd(killWorkersChan chan bool) error {
 	command := exec.Command(cmdString, args...)
 	successChan := make(chan bool)
+	killWaitGroup.Add(1)
 	command.Start()
 
 	go func() {
@@ -47,13 +51,15 @@ func startCmd(killWorkersChan chan bool) error {
 	}()
 
 	err := command.Wait()
+	killWaitGroup.Done()
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "There was an error running command: ", err)
+		successChan <- false
 		return err
 	}
-	successChan <- true
 
+	successChan <- true
 	return nil
 }
 
@@ -107,8 +113,7 @@ func main() {
 	for {
 		select {
 		case <-killWorkersChan:
-			time.Sleep(1 * time.Second)
-			fmt.Println("sleep and die")
+			killWaitGroup.Wait()
 			os.Exit(1)
 		case <-time.After(getErrorDuration(errorsCount)):
 			if workersCount < countOfWorkers {
